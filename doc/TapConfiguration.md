@@ -2,17 +2,55 @@
 
 n2n provides its service through a TAP device which is the virtual ethernet device seen by the computer and user. As a prerequisite, it requires the appropriate TAP driver to be installed. Most Linux systems come with it. If not loaded, `sudo modprobe tap` will do.
 
-For MacOS and Windows there are specific instructions; please see the [Building](./Building.md) document.
+For Windows there are specific instructions; please see the [Building](./Building.md) document. macOS needs no driver at all, see [macOS](#macos) below.
 
 ## Device Name
 
-If the OS specific driver allows **naming** the virtual Ethernet device created by n2n, the `-d <device>` command-line option can be used to give a name, e.g. `-d n2n0`. This device name makes the virtual ethernet device easily accessible to all `ip` command activity, `iptables`, `tcpdump` and any other of your preferred network tools. It defaults to `edge0` if not provided through `-d`.
+If the OS specific driver allows **naming** the virtual Ethernet device created by n2n, the `-d <device>` command-line option can be used to give a name, e.g. `-d n2n0`. This does not apply to macOS, where the kernel names the interfaces (see [macOS](#macos)). This device name makes the virtual ethernet device easily accessible to all `ip` command activity, `iptables`, `tcpdump` and any other of your preferred network tools. It defaults to `edge0` if not provided through `-d`.
 
 One exception applies to Windows: As the installed TAP driver(s) come with fixed names, `-d <device>` **selects** the appropriate device by name out of the present ones. This is only required if more than one TAP devices are present. To help with it, `edge --help` lists the available TAP adapters at the bottom of its output (Windows only).
 
+## macOS
+
+macOS does not provide `/dev/tap*`, so n2n uses the kernel's own `feth`
+(fake ethernet) clone driver instead. Every edge creates a fresh pair
+of interfaces when it starts and destroys that pair when it stops:
+
+| interface | purpose |
+| --------- | ------- |
+| `fethN`   | the interface seen by the host: it carries the IP address, netmask and MAC address of the community member |
+| `fethM`   | the peer of `fethN`, unconfigured; the edge reads the host's frames from it through a BPF device and injects the community's frames into it through an `AF_NDRV` socket |
+
+Notes:
+
+- Interface names are assigned by the kernel and cannot be chosen, so `-d` is not
+  available on macOS. The names of the pair are logged at start-up, e.g.
+  `interface feth4 up and running (192.168.100.1/255.255.255.0), peer feth5, MTU 1290, MAC ...`.
+- `edge` has to run as root for its whole lifetime, see the
+  [Building](./Building.md) document. Privilege dropping through `-u`/`-g` is
+  refused before anything is created.
+- An interface pair which already exists is never reused, taken over or
+  destroyed. Two edges on the same host therefore get two independent pairs.
+- The MTU is limited to 2034 bytes (the n2n packet buffer of 2048 bytes minus
+  the 14 byte ethernet header); larger values are rejected before any interface
+  is created, and values above the kernel's `feth` limit are rejected by the
+  kernel.
+- n2n does not run a DHCP client. With `-a dhcp:0.0.0.0` the address is left
+  alone and has to be configured by an external DHCP client; the edge only
+  re-reads the interface address periodically to detect changes.
+- SIGINT, SIGTERM, the management stop command and a normal daemon shutdown
+  destroy the pair. A process killed with SIGKILL or a crashing process cannot
+  do that, so its pair stays behind. Both names are in the start-up log; destroy
+  them manually, one command per interface:
+
+  ```bash
+  sudo ifconfig feth4 destroy
+  sudo ifconfig feth5 destroy
+  ```
+
 ## MAC
 
-Even virtual ethernet devices have a MAC address. As in real networks, it should be unique as it is used to identify the different participants and transport packets accordingly. The MAC address can optionally be specified by using the `-m <MAC address>` command line parameter, e.g. `-m 01:02:03:04:05:06`. If omitted, n2n tries to assign a random MAC address.
+Even virtual ethernet devices have a MAC address. As in real networks, it should be unique as it is used to identify the different participants and transport packets accordingly. The MAC address can optionally be specified by using the `-m <MAC address>` command line parameter, e.g. `-m 01:02:03:04:05:06`. If omitted, n2n tries to assign a random locally administered unicast MAC address. On macOS the random address is used as well, because the default MAC address of a `feth` interface is derived from the interface number and would be identical on different hosts. The MAC address is preserved when the edge has to re-create its interface after an I/O error.
 
 ## IP Address
 

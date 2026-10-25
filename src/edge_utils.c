@@ -2167,8 +2167,11 @@ void edge_send_packet2net (n2n_edge_t * eee,
 
 /** Read a single packet from the TAP interface, process it and write out the
  *    corresponding packet to the cooked socket.
+ *
+ *  @return  0 if the frame was handled or there was nothing to handle right now
+ *          -1 if the TAP device could not be recovered, the caller has to stop
  */
-void edge_read_from_tap (n2n_edge_t * eee) {
+int edge_read_from_tap (n2n_edge_t * eee) {
 
     /* tun -> remote */
     uint8_t                         eth_pkt[N2N_PKT_BUF_SIZE];
@@ -2177,15 +2180,40 @@ void edge_read_from_tap (n2n_edge_t * eee) {
 
     len = tuntap_read( &(eee->device), eth_pkt, N2N_PKT_BUF_SIZE );
     if((len <= 0) || (len > N2N_PKT_BUF_SIZE)) {
-        traceEvent(TRACE_WARNING, "read()=%d [%d/%s]",
-                   (signed int)len, errno, strerror(errno));
-        traceEvent(TRACE_WARNING, "TAP I/O operation aborted, restart later.");
-        sleep(3);
-        tuntap_close(&(eee->device));
-        tuntap_open(&(eee->device), eee->tuntap_priv_conf.tuntap_dev_name, eee->tuntap_priv_conf.ip_mode, eee->tuntap_priv_conf.ip_addr,
-                    eee->tuntap_priv_conf.netmask, eee->tuntap_priv_conf.device_mac, eee->tuntap_priv_conf.mtu,
-                    eee->tuntap_priv_conf.metric
-                    );
+#ifdef __APPLE__
+        if((len < 0) &&
+           ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR))) {
+            // the feth backend hands out one frame per call while the BPF socket
+            // delivers whole batches, so a readable socket can still hold no
+            // usable frame; nothing is broken, keep the device as it is
+            return 0;
+        }
+#endif
+        {
+            macstr_t reopen_mac;
+            const char *reopen_mac_arg = eee->tuntap_priv_conf.device_mac;
+
+            traceEvent(TRACE_WARNING, "read()=%d [%d/%s]",
+                       (signed int)len, errno, strerror(errno));
+            traceEvent(TRACE_WARNING, "TAP I/O operation aborted, restart later.");
+            sleep(3);
+
+            // keep the MAC address across the re-open, otherwise every recovery
+            // would look like a new neighbour to the host stack and to the peers
+            if((!reopen_mac_arg || (reopen_mac_arg[0] == '\0')) &&
+               !is_null_mac(eee->device.mac_addr))
+                reopen_mac_arg = macaddr_str(reopen_mac, eee->device.mac_addr);
+
+            tuntap_close(&(eee->device));
+
+            if(tuntap_open(&(eee->device), eee->tuntap_priv_conf.tuntap_dev_name, eee->tuntap_priv_conf.ip_mode, eee->tuntap_priv_conf.ip_addr,
+                           eee->tuntap_priv_conf.netmask, reopen_mac_arg, eee->tuntap_priv_conf.mtu,
+                           eee->tuntap_priv_conf.metric
+                           ) < 0) {
+                traceEvent(TRACE_ERROR, "unable to re-open the TAP device, stopping the edge");
+                return -1;
+            }
+        }
     } else {
         const uint8_t * mac = eth_pkt;
         traceEvent(TRACE_DEBUG, "Rx TAP packet (%4d) for %s",
@@ -2199,14 +2227,14 @@ void edge_read_from_tap (n2n_edge_t * eee) {
             if(!eee->last_sup) {
                 // drop packets before first registration with supernode
                 traceEvent(TRACE_DEBUG, "DROP packet before first registration with supernode");
-                return;
+                return 0;
             }
 
             if(eee->network_traffic_filter) {
                 if(eee->network_traffic_filter->filter_packet_from_tap(eee->network_traffic_filter, eee, eth_pkt,
                                                                            len) == N2N_DROP) {
                     traceEvent(TRACE_DEBUG, "filtered packet of size %u", (unsigned int)len);
-                    return;
+                    return 0;
                 }
             }
 
@@ -2214,7 +2242,7 @@ void edge_read_from_tap (n2n_edge_t * eee) {
                 uint16_t tmp_len = len;
                 if(eee->cb.packet_from_tap(eee, eth_pkt, &tmp_len) == N2N_DROP) {
                     traceEvent(TRACE_DEBUG, "DROP packet of size %u", (unsigned int)len);
-                    return;
+                    return 0;
                 }
                 len = tmp_len;
             }
@@ -2222,6 +2250,8 @@ void edge_read_from_tap (n2n_edge_t * eee) {
             edge_send_packet2net(eee, eth_pkt, len);
         }
     }
+
+    return 0;
 }
 
 
@@ -2873,6 +2903,26 @@ void print_edge_stats (const n2n_edge_t *eee) {
 /* ************************************** */
 
 
+#ifndef _WIN32
+/* select() can only be handed descriptors that are open and inside the
+ * descriptor set range; the macOS backend tears its device down for recovery,
+ * which briefly leaves it without a descriptor */
+static int fd_selectable (int fd) {
+
+    return (fd >= 0) && (fd < FD_SETSIZE);
+}
+#endif
+
+#ifdef __APPLE__
+/* the feth backend hands out one frame per call while a single select() wakeup
+ * announces a whole BPF batch; draining it in one go avoids waiting for another
+ * kernel event per frame, and the bound keeps a permanently busy interface from
+ * starving the management and timer work of the main loop */
+#define N2N_TAP_BATCH_MAX 64
+#endif
+
+/* ************************************** */
+
 int run_edge_loop (n2n_edge_t *eee) {
 
     size_t numPurged;
@@ -2930,8 +2980,10 @@ int run_edge_loop (n2n_edge_t *eee) {
 #endif
 
 #ifndef _WIN32
-        FD_SET(eee->device.fd, &socket_mask);
-        max_sock = max(max_sock, eee->device.fd);
+        if(fd_selectable(eee->device.fd)) {
+            FD_SET(eee->device.fd, &socket_mask);
+            max_sock = max(max_sock, eee->device.fd);
+        }
 #endif
 
         wait_time.tv_sec = (eee->sn_wait) ? (SOCKET_TIMEOUT_INTERVAL_SECS / 10 + 1) : (SOCKET_TIMEOUT_INTERVAL_SECS);
@@ -2990,9 +3042,32 @@ int run_edge_loop (n2n_edge_t *eee) {
             }
 
 #ifndef _WIN32
-            if(FD_ISSET(eee->device.fd, &socket_mask)) {
+            if(fd_selectable(eee->device.fd) && FD_ISSET(eee->device.fd, &socket_mask)) {
                 // read an ethernet frame from the TAP socket; write on the IP socket
-                edge_read_from_tap(eee);
+                if(0 != edge_read_from_tap(eee)) {
+                    *eee->keep_running = false;
+                    break;
+                }
+#ifdef __APPLE__
+                // select() reports the BPF batch as a whole but only one frame is
+                // handed out per call, so drain what is already buffered in user
+                // space before waiting for the next kernel event again
+                {
+                    unsigned int batch;
+
+                    for(batch = 0;
+                        (*eee->keep_running) &&
+                        (batch < N2N_TAP_BATCH_MAX) &&
+                        fd_selectable(eee->device.fd) &&
+                        tuntap_has_pending(&(eee->device));
+                        batch++) {
+                        if(0 != edge_read_from_tap(eee)) {
+                            *eee->keep_running = false;
+                            break;
+                        }
+                    }
+                }
+#endif
             }
 #endif
         }

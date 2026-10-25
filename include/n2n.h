@@ -132,6 +132,20 @@ int tuntap_read (struct tuntap_dev *tuntap, unsigned char *buf, int len);
 int tuntap_write (struct tuntap_dev *tuntap, unsigned char *buf, int len);
 void tuntap_close (struct tuntap_dev *tuntap);
 void tuntap_get_address (struct tuntap_dev *tuntap);
+#ifdef __APPLE__
+/* macOS feth backend: one tuntap_read() call returns at most one frame although
+ * the BPF socket delivers a whole batch, so the caller checks for leftovers. */
+int tuntap_has_pending (struct tuntap_dev *tuntap);
+/* Locate the next usable frame inside a BPF capture batch. Returns 1 and fills
+ * frame/frame_len when a frame was found, 0 when the batch holds no further
+ * complete record, and -1 when the batch structure is broken. *offset is
+ * advanced past the consumed record in every case. */
+int tuntap_bpf_parse_frame (const unsigned char *batch,
+                            size_t batch_len,
+                            size_t *offset,
+                            const unsigned char **frame,
+                            size_t *frame_len);
+#endif
 
 /* Utils */
 char* inaddrtoa (ipstr_t out, struct in_addr addr);
@@ -195,7 +209,7 @@ void edge_set_callbacks (n2n_edge_t *eee, const n2n_edge_callbacks_t *callbacks)
 void edge_set_userdata (n2n_edge_t *eee, void *user_data);
 void* edge_get_userdata (n2n_edge_t *eee);
 void edge_send_packet2net (n2n_edge_t *eee, uint8_t *tap_pkt, size_t len);
-void edge_read_from_tap (n2n_edge_t *eee);
+int edge_read_from_tap (n2n_edge_t *eee);
 int edge_get_n2n_socket (n2n_edge_t *eee);
 int edge_get_management_socket (n2n_edge_t *eee);
 int run_edge_loop (n2n_edge_t *eee);

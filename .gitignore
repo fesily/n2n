@@ -31,6 +31,7 @@ __pycache__
 
 # Binaries built to run tests
 tools/tests-auth
+tools/tests-bpf-batch
 tools/tests-compress
 tools/tests-elliptic
 tools/tests-hashing

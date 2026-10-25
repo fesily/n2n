@@ -18,7 +18,14 @@ TOOLS+=n2n-route$(EXE)
 TOOLS+=n2n-portfwd$(EXE)
 TOOLS+=n2n-decode$(EXE)
 
-TESTS=tests-compress$(EXE)
+# the BPF batch parser only exists in the macOS feth backend
+ifneq (,$(findstring darwin,$(CONFIG_HOST_OS)))
+TESTS=tests-bpf-batch$(EXE)
+else
+TESTS=
+endif
+
+TESTS+=tests-compress$(EXE)
 TESTS+=tests-elliptic$(EXE)
 TESTS+=tests-hashing$(EXE)
 TESTS+=tests-transform$(EXE)
@@ -33,6 +40,7 @@ n2n-keygen.o: $(N2N_LIB) $(HEADERS) ../config.mak
 n2n-route.o: $(N2N_LIB) $(HEADERS) ../config.mak
 n2n-portfwd.o: $(N2N_LIB) $(HEADERS) ../config.mak
 n2n-decode.o: $(N2N_LIB) $(HEADERS) ../config.mak
+tests-bpf-batch.o: $(N2N_LIB) $(HEADERS) ../config.mak
 
 ifneq (,$(findstring mingw,$(CONFIG_HOST_OS)))
 # HACK for windows.

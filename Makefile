@@ -221,6 +221,9 @@ test: test.units test.integration
 
 test.units: tools
 	scripts/test_harness.sh tests/tests_units.list
+ifneq (,$(findstring darwin,$(CONFIG_HOST_OS)))
+	scripts/test_harness.sh tests/tests_units_osx.list
+endif
 
 test.integration: $(APPS)
 	scripts/test_harness.sh tests/tests_integration.list

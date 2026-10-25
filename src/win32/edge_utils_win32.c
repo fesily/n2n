@@ -61,7 +61,7 @@ static DWORD* tunReadThread (LPVOID lpArg) {
     struct tunread_arg *arg = (struct tunread_arg*)lpArg;
 
     while(*arg->eee->keep_running) {
-        edge_read_from_tap(arg->eee);
+        (void)edge_read_from_tap(arg->eee);
     }
 
     return((DWORD*)NULL);

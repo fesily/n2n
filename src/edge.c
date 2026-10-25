@@ -366,7 +366,11 @@ static void help (int level) {
                " ...password <pw>  | \n", N2N_MGMT_PASSWORD);
         printf(" -v                | make more verbose, repeat as required\n");
         printf(" -V                | make less verbose, repeat as required\n");
-#ifndef _WIN32
+#if defined(__APPLE__)
+        printf(" -u <UID>          | not supported on macOS: the feth network interface\n"
+               "                   | needs root privileges for its whole lifetime\n");
+        printf(" -g <GID>          | not supported on macOS, see -u\n");
+#elif !defined(_WIN32)
         printf(" -u <UID>          | numeric user ID to use when privileges are dropped\n");
         printf(" -g <GID>          | numeric group ID to use when privileges are dropped\n");
 #endif
@@ -960,7 +964,7 @@ static void daemonize () {
 
 static bool keep_on_running = true;
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 #ifdef _WIN32
 BOOL WINAPI term_handler(DWORD sig)
 #else
@@ -971,7 +975,11 @@ BOOL WINAPI term_handler(DWORD sig)
 
     if(called) {
         traceEvent(TRACE_NORMAL, "ok, I am leaving now");
+#ifndef __APPLE__
+        /* on macOS the feth interfaces survive the process, so the shutdown has
+         * to run to completion instead of being cut short here */
         _exit(0);
+#endif
     } else {
         traceEvent(TRACE_NORMAL, "shutting down...");
         called = 1;
@@ -989,7 +997,7 @@ BOOL WINAPI term_handler(DWORD sig)
     return(TRUE);
 #endif
 }
-#endif /* defined(__linux__) || defined(_WIN32) */
+#endif /* defined(__linux__) || defined(__APPLE__) || defined(_WIN32) */
 
 /* *************************************************** */
 
@@ -1014,7 +1022,7 @@ int main (int argc, char* argv[]) {
     uint8_t  pktbuf[N2N_SN_PKTBUF_SIZE + sizeof(uint16_t)]; /* buffer + prepended buffer length in case of tcp */
 
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
     struct passwd *pw = NULL;
 #endif
 #ifdef HAVE_LIBCAP
@@ -1030,7 +1038,13 @@ int main (int argc, char* argv[]) {
     ec.mtu = DEFAULT_MTU;
     ec.daemon = 1;        /* By default run in daemon mode. */
 
-#ifndef _WIN32
+#if defined(__APPLE__)
+    /* the feth backend needs root privileges for creating, configuring and
+     * destroying its interfaces and for accessing the BPF devices, so there is
+     * no unprivileged default user to drop to */
+    ec.userid = 0;
+    ec.groupid = 0;
+#elif !defined(_WIN32)
     if(((pw = getpwnam("n2n")) != NULL) ||
        ((pw = getpwnam("nobody")) != NULL)) {
         ec.userid = pw->pw_uid;
@@ -1105,6 +1119,24 @@ int main (int argc, char* argv[]) {
 
     if(edge_verify_conf(&conf) != 0)
         help(1); /* short help */
+
+#ifdef __APPLE__
+    /* checked before any interface is created so that a rejected configuration
+     * never leaves a feth pair behind */
+    if((ec.userid != 0) || (ec.groupid != 0)) {
+        traceEvent(TRACE_ERROR, "dropping privileges is not supported on macOS, but uid=%d and/or gid=%d was configured",
+                   (signed int)ec.userid, (signed int)ec.groupid);
+        traceEvent(TRACE_ERROR, "the feth network interface needs root privileges for its whole lifetime, "
+                   "remove -u/-g (--euid/--egid) from the command line and from the configuration file");
+        exit(1);
+    }
+
+    if(geteuid() != 0) {
+        traceEvent(TRACE_ERROR, "edge needs to be run as root on macOS to create and configure the feth "
+                   "interfaces, to pair them and to access the BPF and AF_NDRV sockets");
+        exit(1);
+    }
+#endif
 
     traceEvent(TRACE_NORMAL, "starting n2n edge %s %s", PACKAGE_VERSION, PACKAGE_BUILDDATE);
 
@@ -1327,11 +1359,16 @@ int main (int argc, char* argv[]) {
         }
     }
 
+#ifdef __APPLE__
+    if(geteuid() != 0)
+        traceEvent(TRACE_WARNING, "not running as root, the feth backend will refuse to start");
+#else
     if((getuid() == 0) || (getgid() == 0))
         traceEvent(TRACE_WARNING, "running as root is discouraged, check out the -u/-g options");
 #endif
+#endif
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     signal(SIGPIPE, SIG_IGN);
     signal(SIGTERM, term_handler);
     signal(SIGINT,  term_handler);

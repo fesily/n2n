@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Improvements
+
+* macOS: replace the `/dev/tap*` backend by the in-kernel `feth` driver, no TUN/TAP
+  kernel extension has to be installed anymore. Every edge creates and destroys its
+  own pair of `feth` interfaces, the names are logged at start-up.
+* macOS: `edge` runs as root for its whole lifetime, `-u`/`-g` and their
+  `--euid`/`--egid` configuration file forms are rejected before anything is created.
+* macOS: SIGINT and SIGTERM now shut the edge down properly and clean up the
+  interfaces.
+* edge: hand out all frames of a TAP batch instead of only the first one, keep the
+  MAC address across a device re-open and stop the loop if the device cannot be
+  re-opened.
+
 ## n2n 2.8 (August 2020)
 
 This release brings significant new features to n2n's crypto world and offers

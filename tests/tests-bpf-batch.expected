@@ -1,0 +1,18 @@
+bpf_hdr: sizeof=20 minimum=18
+
+single frame                     rc= 1 len=  64 offset=  84 payload=ok
+batch of two, first              rc= 1 len=  64 offset=  84 payload=ok
+batch of two, second             rc= 1 len= 128 offset= 232 payload=ok
+batch of two, drained            rc= 0 len=   0 offset= 232 payload=-
+last record without padding      rc= 1 len=  61 offset=  79 payload=ok
+header longer than needed        rc= 1 len=  61 offset=  84 payload=ok
+frame shorter than ethernet      rc= 1 len=  64 offset= 112 payload=ok
+frame cut by capture length      rc= 1 len=  64 offset= 168 payload=ok
+empty record                     rc= 1 len=  64 offset= 104 payload=ok
+oversized frame                  rc= 0 len=   0 offset=2068 payload=-
+capture length beyond batch      rc=-1 len=   0 offset=  74 payload=-
+zero header length               rc=-1 len=   0 offset=  64 payload=-
+valid batch, one frame           rc= 1 len=  64 offset=  84 payload=ok
+valid batch, drained             rc= 0 len=   0 offset=  84 payload=-
+empty batch                      rc= 0 len=   0 offset=   0 payload=-
+trailing partial header          rc= 0 len=   0 offset=  17 payload=-

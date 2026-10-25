@@ -240,6 +240,16 @@ typedef struct tuntap_dev {
     uint32_t             device_mask;
     uint16_t             mtu;
     devstr_t             dev_name;
+#ifdef __APPLE__
+    /* macOS feth backend: fd above is the BPF socket used for reading, frames
+     * are injected through an AF_NDRV socket bound to the peer interface */
+    int                  write_fd;
+    devstr_t             peer_name;     /**< kernel assigned name of the feth peer */
+    uint8_t *            bpf_buf;       /**< one capture batch, allocated per open */
+    size_t               bpf_buf_size;  /**< size of the batch buffer as granted by the kernel */
+    size_t               bpf_buf_len;   /**< valid bytes in the current batch */
+    size_t               bpf_buf_pos;   /**< offset of the next record in the batch */
+#endif
 } tuntap_dev;
 
 #define SOCKET int

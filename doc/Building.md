@@ -29,21 +29,31 @@ git submodule update --init --recursive
 
 # Build on macOS
 
-In order to use n2n on macOS, you first need to install support for TUN/TAP interfaces:
+macOS builds use the in-kernel `feth` (fake ethernet) driver which is part of
+every macOS release since Sierra. No TUN/TAP kernel extension and no helper
+service has to be installed, only the command line tools:
 
 ```bash
-brew tap homebrew/cask
-brew cask install tuntap
+xcode-select --install
 ```
 
-If you are on a modern version of macOS (i.e. Catalina), the commands above will ask you to enable the TUN/TAP kernel extension in System Preferences → Security & Privacy → General.
+`edge` needs **root privileges for its whole lifetime** on macOS: creating,
+pairing, configuring and destroying the `feth` interfaces as well as opening a
+`/dev/bpf*` device are privileged operations. The `-u`/`-g` options (and their
+`--euid`/`--egid` forms, also usable in a configuration file) are therefore
+rejected on macOS before any interface is created.
 
-For more information refer to vendor documentation or the [Apple Technical Note](https://developer.apple.com/library/content/technotes/tn2459/_index.html).
+Start the edge with `sudo` (a daemonized edge keeps running as root as well):
 
-Note that on the newest MacOS versions and on Apple Silicon, there may be
-increasing security restrictions in the OS that make installing the TUN/TAP
-kernel extension difficult.  Alternative software implementations to avoid
-these difficulties are being discussed for future n2n versions.
+```bash
+sudo edge -c mynetwork -k mysecretpass -a 192.168.100.1 -l supernode.example.org:7654 -f
+```
+
+The kernel assigns the interface names, a pair of `fethN` interfaces is created
+per edge. Both names are logged at start-up, see
+[TAP Device Configuration](./TapConfiguration.md) for details, the DHCP
+configuration responsibility and how to clean up a pair left behind by a killed
+process.
 
 # Build on Windows
 
